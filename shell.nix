@@ -17,5 +17,16 @@ pkgs.mkShell {
 
     zip
     terraform
+
+    # library dependencies
+    pkgconfig
   ];
+
+  PKG_CONFIG_ALLOW_CROSS=true;
+  PKG_CONFIG_ALL_STATIC=true;
+  LIBZ_SYS_STATIC=1;
+
+  OPENSSL_STATIC=1;
+  OPENSSL_DIR = pkgs.pkgsStatic.openssl.dev;
+  OPENSSL_LIB_DIR = "${pkgs.pkgsStatic.openssl.out}/lib";
 }

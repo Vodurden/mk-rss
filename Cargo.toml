@@ -5,6 +5,10 @@ authors = ["Jake Woods <jake@jakewoods.net>"]
 edition = "2018"
 
 [dependencies]
-lambda_runtime = "0.2.1"
-lambda_http = "0.1.1"
+anyhow = "1.0.31"
+scraper = "0.12.0"
 thiserror = "1.0"
+tokio = "0.2.22"
+reqwest = { version = "0.10.7"  }
+lambda_http = { git = "https://github.com/awslabs/aws-lambda-rust-runtime/", branch = "master" }
+indoc = "1.0"

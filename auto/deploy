@@ -15,7 +15,6 @@ trap cleanup EXIT
 
 echo "Building mk-rss (release, musl)"
 cargo build \
-      --quiet \
       --release \
       --target x86_64-unknown-linux-musl
 
