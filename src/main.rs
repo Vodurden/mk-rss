@@ -1,15 +1,16 @@
 mod feed_request;
 mod feed_item;
-
-use feed_request::FeedRequest;
-use feed_item::FeedItem;
+mod fetch;
 
 use anyhow;
 use indoc::formatdoc;
 use lambda_http::{IntoResponse, Request, Response};
 use lambda_http::lambda;
-use reqwest;
 use std::convert::TryFrom;
+
+use feed_request::FeedRequest;
+use feed_item::FeedItem;
+use fetch::fetch_url;
 
 #[lambda::lambda(http)]
 #[tokio::main]
@@ -28,14 +29,13 @@ async fn main(request: Request, _: lambda::Context) -> Result<impl IntoResponse,
 }
 
 async fn mk_rss(request: Request) -> anyhow::Result<impl IntoResponse> {
-    let feed_request = FeedRequest::try_from(request)?;
+    let request = FeedRequest::try_from(request)?;
 
-    let response = reqwest::get(feed_request.url.clone()).await?;
-    let body = response.text().await?;
+    let body = fetch_url(request.url.clone()).await?;
 
-    let items = FeedItem::scrape_all(&feed_request, &body);
+    let items = FeedItem::scrape_all(&request, &body);
 
-    let xml = to_xml_string(feed_request, items);
+    let xml = to_xml_string(request, items);
 
     let response = Response::builder()
         .status(200)
@@ -45,6 +45,7 @@ async fn mk_rss(request: Request) -> anyhow::Result<impl IntoResponse> {
 
     Ok(response)
 }
+
 
 fn to_xml_string(request: FeedRequest, items: Vec<FeedItem>) -> String {
     let items_xml: String = items.into_iter().map(|item| {
