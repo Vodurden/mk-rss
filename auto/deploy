@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+pushd "${SOURCE_DIR}/.." > /dev/null
+
+function cleanup {
+  rm -f ./bootstrap
+  rm -f lambda.zip
+
+  popd > /dev/null
+}
+trap cleanup EXIT
+
+echo "Building mk-rss (release, musl)"
+cargo build \
+      --quiet \
+      --release \
+      --target x86_64-unknown-linux-musl
+
+echo "Creating bootstraped mk-rss.zip"
+cp ./target/x86_64-unknown-linux-musl/release/mk-rss ./bootstrap
+zip lambda.zip ./bootstrap
+
+echo "Uploading mk-rss.zip"
+aws lambda update-function-code \
+    --function-name 126498475487:function:mk-rss \
+    --zip-file "fileb://${SOURCE_DIR}/../lambda.zip"

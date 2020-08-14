@@ -14,5 +14,8 @@ pkgs.mkShell {
 
     rustfmt
     unstable.rust-analyzer
+
+    zip
+    terraform
   ];
 }
