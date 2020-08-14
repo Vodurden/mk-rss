@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 lambda_runtime = "0.2.1"
 lambda_http = "0.1.1"
+thiserror = "1.0"
