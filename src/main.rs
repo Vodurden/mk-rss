@@ -1,9 +1,9 @@
 mod feed_request;
 mod feed_item;
 mod fetch;
+mod rss;
 
 use anyhow;
-use indoc::formatdoc;
 use lambda_http::{IntoResponse, Request, Response};
 use lambda_http::lambda;
 use std::convert::TryFrom;
@@ -35,7 +35,7 @@ async fn mk_rss(request: Request) -> anyhow::Result<impl IntoResponse> {
 
     let items = FeedItem::scrape_all(&request, &body);
 
-    let xml = to_xml_string(request, items);
+    let xml = rss::xml_string(request, items);
 
     let response = Response::builder()
         .status(200)
@@ -44,31 +44,4 @@ async fn mk_rss(request: Request) -> anyhow::Result<impl IntoResponse> {
         .expect("failed to render response");
 
     Ok(response)
-}
-
-
-fn to_xml_string(request: FeedRequest, items: Vec<FeedItem>) -> String {
-    let items_xml: String = items.into_iter().map(|item| {
-        formatdoc! {"
-            <item>
-              <title>{}</title>
-              <link>{}</link>
-              <description/>
-            </item>
-          ", item.title, item.url
-        }
-    }).collect::<Vec<String>>().join("");
-
-    formatdoc! {"
-        <rss version=\"2.0\">
-        <channel>
-
-        <title>{}</title>
-        <link>{}</link>
-        <description/>
-
-        {}
-        </channel>
-        </rss>", request.name, request.url, items_xml
-    }
 }

@@ -51,7 +51,7 @@ resource "aws_api_gateway_deployment" "mk_rss" {
   ]
 
   rest_api_id = aws_api_gateway_rest_api.mk_rss.id
-  stage_name  = "v1"
+  stage_name  = "feed"
 }
 
 output "base_url" {
