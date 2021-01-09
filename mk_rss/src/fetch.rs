@@ -56,7 +56,16 @@ fn calculate_cache_path(url: &Url) -> PathBuf {
 }
 
 async fn fetch_from_web(url: Url) -> anyhow::Result<String> {
-    let response = reqwest::get(url).await?;
+    // Some sites die if we don't provide a user agent, let's just give them the chrome one.
+    let chrome_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36";
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, chrome_user_agent)
+        .send()
+        .await?;
+
     let body = response.text().await?;
 
     Ok(body)

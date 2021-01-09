@@ -3,17 +3,25 @@ let
   pkgs = import sources.nixpkgs { overlays = [(import sources.nixpkgs-mozilla)]; };
   unstable = import sources.nixpkgs-unstable {};
 
-  rustChannel = pkgs.rustChannelOfTargets "stable" null [
+  # Anything higher then 1.45 seems to cause the musl binaries to still be linked
+  # to glibc which triggers a segfault.
+  rustChannel = pkgs.rustChannelOfTargets "1.45" null [
     "x86_64-unknown-linux-musl"
   ];
 in
 
 pkgs.mkShell {
   nativeBuildInputs = with pkgs; [
+    # The rust-analyzer from `rustChannel` is slightly broken, so we use the nixpkgs one instead
+    #
+    # It's crucial that rust-analyzer appears before rust, because the order of buildInputs determines the PATH environment variable.
+    #
+    # See: https://github.com/mozilla/nixpkgs-mozilla/issues/238#issuecomment-714577687
+    rust-analyzer
+
     rustChannel
 
     rustfmt
-    unstable.rust-analyzer
 
     zip
     terraform
