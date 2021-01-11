@@ -28,6 +28,9 @@ pub struct FeedRequest {
     /// This must point to an `<a>` tag and we assume the `href` is the target URL
     pub link_selector: Option<Selector>,
 
+    /// A css selector indicating which HTML node identifies the date this item was published
+    pub pub_date_selector: Option<Selector>,
+
     /// The order of elements the feed should return.
     ///
     /// `Normal` means the same order as the webpage (top-most item will be considered the "most recent")

@@ -34,6 +34,12 @@ struct Args {
     #[clap(long)]
     link_selector: Option<String>,
 
+    /// A jQuery style css selector indicating the HTML node that contains a human-readable publish date.
+    ///
+    /// This selector searches within the node indicated by `--item-selector`.
+    #[clap(long)]
+    pub_date_selector: Option<String>,
+
     /// The order of items to return.
     ///
     /// "normal" returns the items in the order they appear on the page from top to bottom.
@@ -87,7 +93,8 @@ async fn fetch(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         url: args.url,
         item_selector: Selector::parse(&args.item_selector).unwrap(),
         title_selector: args.title_selector.and_then(|t| Selector::parse(&t).ok()),
-        link_selector: args.link_selector.and_then(|t| Selector::parse(&t).ok()),
+        link_selector: args.link_selector.and_then(|l| Selector::parse(&l).ok()),
+        pub_date_selector: args.pub_date_selector.and_then(|pd| Selector::parse(&pd).ok()),
         order: FeedOrder::Normal,
         max_items: 30
     };
@@ -115,6 +122,11 @@ fn to_rss_url(args: &Args, command_args: &ToRSSUrl) {
     if let Some(link_selector) = &args.link_selector {
         rss_url.query_pairs_mut()
                .append_pair("link_selector", link_selector);
+    }
+
+    if let Some(pub_date_selector) = &args.pub_date_selector {
+        rss_url.query_pairs_mut()
+               .append_pair("pub_date_selector", pub_date_selector);
     }
 
     rss_url

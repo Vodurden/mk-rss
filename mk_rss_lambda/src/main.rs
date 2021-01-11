@@ -64,6 +64,7 @@ fn make_feed_request(request: Request) -> anyhow::Result<FeedRequest> {
 
     let title_selector = get_selector("title_selector")?;
     let link_selector = get_selector("link_selector")?;
+    let pub_date_selector = get_selector("pub_date_selector")?;
 
     let order: FeedOrder = match params.get("order") {
         Some(order) => FeedOrder::try_from(order)?,
@@ -85,6 +86,7 @@ fn make_feed_request(request: Request) -> anyhow::Result<FeedRequest> {
         item_selector,
         title_selector,
         link_selector,
+        pub_date_selector,
         order,
         max_items
     })
@@ -94,7 +96,7 @@ fn make_feed_request(request: Request) -> anyhow::Result<FeedRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use netlify_lambda_http::{http, Body, RequestExt};
+    use netlify_lambda_http::{Request, RequestExt};
     use itertools::Itertools;
 
     #[test]
@@ -105,6 +107,7 @@ mod tests {
             ("item_selector", ".class"),
             ("title_selector", ".title-class"),
             ("link_selector", ".link-class"),
+            ("pub_date_selector", ".pub-date-class"),
             ("order", "reversed"),
             ("max_items", "25"),
         ];
@@ -114,10 +117,7 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .into_group_map();
 
-        let request = http::Request::builder()
-            .uri("https://api.com/feed")
-            .body(Body::default())
-            .expect("failed to build request")
+        let request = Request::default()
             .with_query_string_parameters(params);
 
         let expected = FeedRequest {
@@ -126,6 +126,7 @@ mod tests {
             item_selector: Selector::parse(".class").unwrap(),
             title_selector: Some(Selector::parse(".title-class").unwrap()),
             link_selector: Some(Selector::parse(".link-class").unwrap()),
+            pub_date_selector: Some(Selector::parse(".pub-date-class").unwrap()),
             order: FeedOrder::Reversed,
             max_items: 25
         };

@@ -1,7 +1,8 @@
 use indoc::formatdoc;
 use reqwest::Url;
 use scraper::Html;
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Duration, Local};
+use chrono_english::Dialect;
 
 use super::feed_request::{FeedRequest, FeedOrder};
 
@@ -16,7 +17,7 @@ pub struct Feed {
 pub struct FeedItem {
     pub title: String,
     pub url: Url,
-    pub pub_date: Option<DateTime<Utc>>,
+    pub pub_date: Option<DateTime<Local>>,
 }
 
 impl Feed {
@@ -27,13 +28,13 @@ impl Feed {
             .select(&request.item_selector)
             .filter_map(|item| {
                 let title_node = request.title_selector
-                    .clone()
+                    .as_ref()
                     .and_then(|s| item.select(&s).next())
                     .unwrap_or(item);
 
                 let title = title_node.text().collect::<String>().trim().to_string();
                 let link_node = request.link_selector
-                    .clone()
+                    .as_ref()
                     .and_then(|s| item.select(&s).next())
                     .unwrap_or(item);
 
@@ -42,7 +43,15 @@ impl Feed {
                     .ok()
                     .or_else(|| request.url.join(&url).ok())?;
 
-                Some(FeedItem { title, url: absolute_url, pub_date: None })
+                let pub_date_node = request.pub_date_selector
+                    .as_ref()
+                    .and_then(|s| item.select(&s).next())
+                    .unwrap_or(item);
+
+                let pub_date_text = pub_date_node.text().collect::<String>().trim().to_string();
+                let pub_date = chrono_english::parse_date_string(&pub_date_text, Local::now(), Dialect::Uk).ok();
+
+                Some(FeedItem { title, url: absolute_url, pub_date })
             })
             .collect();
 
@@ -58,9 +67,9 @@ impl Feed {
         // From a lot of sites we don't have a good way to get the
         // publication date. Instead we synthesise a date to keep
         // the feed order consistent.
-        let mut item_pub_date = Utc::now();
+        let mut item_pub_date = Local::now();
         for item in items.iter_mut() {
-            item.pub_date = Some(item_pub_date);
+            item.pub_date = Some(item.pub_date.unwrap_or(item_pub_date));
             item_pub_date = item_pub_date - Duration::hours(1);
         }
 
@@ -130,6 +139,7 @@ mod tests {
     use super::*;
     use scraper::Selector;
     use indoc::indoc;
+    use chrono::{TimeZone, NaiveDate};
 
     /// When parsing items from HTML we need to deal with two types of links:
     ///
@@ -146,6 +156,7 @@ mod tests {
             item_selector: Selector::parse(".item").unwrap(),
             title_selector: None,
             link_selector: None,
+            pub_date_selector: None,
             order: FeedOrder::Normal,
             max_items: 30,
         };
@@ -162,5 +173,37 @@ mod tests {
         let feed = Feed::scrape(&request, html_body);
 
         assert_eq!(feed.items.get(0).map(|i| i.url.to_string()), Some("https://example.com/feed/item-1".to_string()))
+    }
+
+    #[test]
+    pub fn parse_human_dates() {
+        let request = FeedRequest {
+            name: "Parse Human Dates Test".into(),
+            url: Url::parse("https://example.com/feed/").unwrap(),
+            item_selector: Selector::parse(".item").unwrap(),
+            title_selector: Selector::parse(".link").ok(),
+            link_selector: Selector::parse(".link").ok(),
+            pub_date_selector: Selector::parse(".published").ok(),
+            order: FeedOrder::Normal,
+            max_items: 30,
+        };
+
+        let html_body = indoc! {r#"
+            <!DOCTYPE html>
+            <html lang="en-US">
+            <body>
+              <div class="item">
+                <a class="link" href="item-1">The Story</a>
+                <p class="published">Jan 10, 2021</p>
+              </div>
+            </body>
+        "#};
+
+        let feed = Feed::scrape(&request, html_body);
+
+        assert_eq!(
+            feed.items.get(0).and_then(|i| i.pub_date),
+            Local.from_local_date(&NaiveDate::from_ymd(2021, 01, 10)).and_hms_opt(0, 0, 0).earliest()
+        );
     }
 }
