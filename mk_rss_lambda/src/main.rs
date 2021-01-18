@@ -2,11 +2,9 @@ use anyhow::{self, Context};
 use netlify_lambda_http::{IntoResponse, Request, RequestExt, Response};
 use netlify_lambda_http::lambda;
 use std::convert::TryFrom;
-use std::cmp;
 use reqwest::Url;
-use scraper::Selector;
 
-use mk_rss::{self, FeedRequest, FeedOrder};
+use mk_rss::{self, FeedRequest, FeedRequestBuilder, FeedOrder};
 
 type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
@@ -39,63 +37,48 @@ async fn main(request: Request, _: lambda::Context) -> Result<impl IntoResponse,
 fn make_feed_request(request: Request) -> anyhow::Result<FeedRequest> {
     let params = request.query_string_parameters();
 
-    let name = params.get("name")
-        .ok_or(anyhow::anyhow!("name is required"))?
-        .to_string();
-
-    let url: Url = params.get("url")
-        .ok_or(anyhow::anyhow!("url is required"))
-        .and_then({|url|
-            Url::parse(url).context("invalid url")
-        })?;
-
-    let get_selector = |name: &str| -> anyhow::Result<Option<Selector>> {
+    let get_required = |name: &str| -> anyhow::Result<String> {
         params
             .get(name)
-            .map(Selector::parse)
-            .map(|s| {
-                s.map_err(|_| anyhow::anyhow!("invalid {}", name))
-            })
-            .transpose()
+            .ok_or(anyhow::anyhow!("{} is required", name))
+            .map(|s| s.to_string())
     };
 
-    let item_selector = get_selector("item_selector")?
-        .ok_or(anyhow::anyhow!("item_selector is required"))?;
-
-    let title_selector = get_selector("title_selector")?;
-    let link_selector = get_selector("link_selector")?;
-    let pub_date_selector = get_selector("pub_date_selector")?;
-
-    let order: FeedOrder = match params.get("order") {
-        Some(order) => FeedOrder::try_from(order)?,
-        None => FeedOrder::Normal,
-    };
+    let name = get_required("name")?;
+    let url = get_required("url").and_then(|s| Url::parse(&s).context("Could not parse URL"))?;
+    let item_selector = get_required("item_selector")?;
 
     let max_items = params
         .get("max_items")
-        .map(|s| {
-            s.parse::<usize>().context("max_items must be a number")
-        })
-        .transpose()?
-        .unwrap_or(30);
-    let max_items = cmp::min(max_items, 30);
+        .map(|s| s.parse::<usize>().context("max_items must be a number"))
+        .transpose()?;
 
-    Ok(FeedRequest {
+    let order = params
+        .get("order")
+        .map(|s| FeedOrder::try_from(s))
+        .transpose()?;
+
+    let feed_request_builder = FeedRequestBuilder {
         name,
         url,
         item_selector,
-        title_selector,
-        link_selector,
-        pub_date_selector,
-        order,
-        max_items
-    })
+        title_selector: params.get("title_selector").map(|s| s.to_string()),
+        link_selector: params.get("link_selector").map(|s| s.to_string()),
+        pub_date_selector: params.get("pub_date_selector").map(|s| s.to_string()),
+        max_items,
+        order
+    };
+
+    let feed_request = feed_request_builder.build()?;
+
+    Ok(feed_request)
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mk_rss::FeedRequest;
     use netlify_lambda_http::{Request, RequestExt};
     use itertools::Itertools;
 
@@ -120,16 +103,15 @@ mod tests {
         let request = Request::default()
             .with_query_string_parameters(params);
 
-        let expected = FeedRequest {
-            name: "Example RSS".into(),
-            url: Url::parse("https://example.com/feed").unwrap(),
-            item_selector: Selector::parse(".class").unwrap(),
-            title_selector: Some(Selector::parse(".title-class").unwrap()),
-            link_selector: Some(Selector::parse(".link-class").unwrap()),
-            pub_date_selector: Some(Selector::parse(".pub-date-class").unwrap()),
-            order: FeedOrder::Reversed,
-            max_items: 25
-        };
+        let expected = FeedRequestBuilder::new("Example RSS", Url::parse("https://example.com/feed").unwrap(), ".class")
+            .title_selector(".title-class")
+            .link_selector(".link-class")
+            .pub_date_selector(".pub-date-class")
+            .order(FeedOrder::Reversed)
+            .max_items(25 as usize)
+            .build()
+            .unwrap();
+
         let expected: anyhow::Result<FeedRequest, String> = Ok(expected);
 
         let feed_request = make_feed_request(request)

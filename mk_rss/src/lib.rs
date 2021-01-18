@@ -3,7 +3,7 @@ mod feed;
 mod fetch;
 
 pub use feed::{Feed, FeedItem};
-pub use feed_request::{FeedRequest, FeedOrder};
+pub use feed_request::{FeedRequestBuilder, FeedRequest, FeedOrder};
 use fetch::fetch_url;
 
 pub async fn fetch_feed(request: FeedRequest) -> anyhow::Result<Feed> {

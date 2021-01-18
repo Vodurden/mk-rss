@@ -1,6 +1,7 @@
 use anyhow;
 use reqwest::Url;
 use std::convert::TryFrom;
+use std::cmp;
 use std::str::FromStr;
 use scraper::Selector;
 
@@ -41,7 +42,104 @@ pub struct FeedRequest {
     pub max_items: usize,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+
+#[derive(Debug, PartialEq)]
+pub struct FeedRequestBuilder {
+    pub name: String,
+    pub url: Url,
+    pub item_selector: String,
+    pub title_selector: Option<String>,
+    pub link_selector: Option<String>,
+    pub pub_date_selector: Option<String>,
+    pub order: Option<FeedOrder>,
+    pub max_items: Option<usize>,
+}
+
+impl FeedRequestBuilder {
+    pub fn new(name: &str, url: Url, item_selector: &str) -> Self {
+        FeedRequestBuilder {
+            name: name.to_string(),
+            url,
+            item_selector: item_selector.to_string(),
+            title_selector: None,
+            link_selector: None,
+            pub_date_selector: None,
+            order: None,
+            max_items: None
+        }
+    }
+
+    pub fn maybe_title_selector<S: Into<String>>(&mut self, selector: Option<S>) -> &mut Self {
+        self.title_selector = selector.map(|s| s.into());
+        self
+    }
+
+    pub fn title_selector<S: Into<String>>(&mut self, selector: S) -> &mut Self {
+        self.maybe_title_selector(Some(selector))
+    }
+
+    pub fn link_selector<S: Into<String>>(&mut self, selector: S) -> &mut Self {
+        self.link_selector = Some(selector.into());
+        self
+    }
+
+    pub fn pub_date_selector<S: Into<String>>(&mut self, selector: S) -> &mut Self {
+        self.pub_date_selector = Some(selector.into());
+        self
+    }
+
+    pub fn order<O: Into<FeedOrder>>(&mut self, order: O) -> &mut Self {
+        self.order = Some(order.into());
+        self
+    }
+
+    pub fn max_items<S: Into<usize>>(&mut self, max_items: S) -> &mut Self {
+        self.max_items = Some(max_items.into());
+        self
+    }
+
+    pub fn build(&self) -> anyhow::Result<FeedRequest> {
+        let item_selector = Selector::parse(&self.item_selector)
+            .map_err(|e| anyhow::anyhow!("Could not parse item_selector: {:?}", e))?;
+
+        let title_selector = self.title_selector
+            .as_ref()
+            .map(|s| Selector::parse(s))
+            .transpose()
+            .map_err(|e| anyhow::anyhow!("Could not parse title_selector: {:?}", e))?;
+
+        let link_selector = self.link_selector
+            .as_ref()
+            .map(|s| Selector::parse(s))
+            .transpose()
+            .map_err(|e| anyhow::anyhow!("Could not parse link_selector: {:?}", e))?;
+
+        let pub_date_selector = self.pub_date_selector
+            .as_ref()
+            .map(|s| Selector::parse(s))
+            .transpose()
+            .map_err(|e| anyhow::anyhow!("Could not parse pub_date_selector: {:?}", e))?;
+
+        let order = self.order.unwrap_or(FeedOrder::Normal);
+
+        let max_items = self.max_items.unwrap_or(30);
+        let max_items = cmp::min(max_items, 30);
+
+        Ok(FeedRequest {
+            name: self.name.clone(),
+            url: self.url.clone(),
+            item_selector,
+            title_selector,
+            link_selector,
+            pub_date_selector,
+            order,
+            max_items
+        })
+    }
+}
+
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum FeedOrder { Normal, Reversed }
 
 impl TryFrom<&str> for FeedOrder {

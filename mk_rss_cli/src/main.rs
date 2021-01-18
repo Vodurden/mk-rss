@@ -1,9 +1,8 @@
 use clap::Clap;
 use reqwest::Url;
-use scraper::Selector;
 use tokio;
 
-use mk_rss::{self, FeedRequest, FeedOrder};
+use mk_rss::{self, FeedRequestBuilder, FeedOrder};
 
 #[derive(Clap, Debug)]
 #[clap(version = "1.0.1", author = "Jake Woods <jake@jakewoods.net>")]
@@ -49,7 +48,7 @@ struct Args {
 
     /// The maximum number of items to return in the feed.
     #[clap(long, default_value = "30")]
-    max_items: u32,
+    max_items: usize,
 
     #[clap(subcommand)]
     command: Command
@@ -88,16 +87,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn fetch(args: Args) -> Result<(), Box<dyn std::error::Error>> {
-    let feed_request = FeedRequest {
+    let feed_request_builder = FeedRequestBuilder {
         name: args.name,
         url: args.url,
-        item_selector: Selector::parse(&args.item_selector).unwrap(),
-        title_selector: args.title_selector.and_then(|t| Selector::parse(&t).ok()),
-        link_selector: args.link_selector.and_then(|l| Selector::parse(&l).ok()),
-        pub_date_selector: args.pub_date_selector.and_then(|pd| Selector::parse(&pd).ok()),
-        order: FeedOrder::Normal,
-        max_items: 30
+        item_selector: args.item_selector,
+        title_selector: args.title_selector,
+        link_selector: args.link_selector,
+        pub_date_selector: args.pub_date_selector,
+        order: Some(args.order),
+        max_items: Some(args.max_items)
     };
+
+    let feed_request = feed_request_builder.build()?;
 
     let feed = mk_rss::fetch_feed(feed_request).await?;
     println!("{}", feed.to_rss_xml());
