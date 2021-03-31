@@ -1,81 +1,31 @@
 use indoc::formatdoc;
 use reqwest::Url;
-use scraper::Html;
 use chrono::{DateTime, Duration, Local};
-use chrono_english::Dialect;
 
-use super::feed_request::{FeedRequest, FeedOrder};
+use super::website::{Website, WebsiteElement};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Feed {
-    name: String,
-    url: Url,
-    items: Vec<FeedItem>
+    pub name: String,
+    pub url: Url,
+    pub items: Vec<FeedItem>
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct FeedItem {
     pub title: String,
     pub url: Url,
-    pub pub_date: Option<DateTime<Local>>,
+    pub pub_date: DateTime<Local>
 }
 
 impl Feed {
-    pub fn scrape(request: &FeedRequest, html_body: &str) -> Feed {
-        let document = Html::parse_document(html_body);
-
-        let mut items: Vec<FeedItem> = document
-            .select(&request.item_selector)
-            .filter_map(|item| {
-                let title_node = request.title_selector
-                    .as_ref()
-                    .and_then(|s| item.select(&s).next())
-                    .unwrap_or(item);
-
-                let title = title_node.text().collect::<String>().trim().to_string();
-                let link_node = request.link_selector
-                    .as_ref()
-                    .and_then(|s| item.select(&s).next())
-                    .unwrap_or(item);
-
-                let url = link_node.value().attr("href")?.to_string();
-                let absolute_url = Url::parse(&url)
-                    .ok()
-                    .or_else(|| request.url.join(&url).ok())?;
-
-                let pub_date_node = request.pub_date_selector
-                    .as_ref()
-                    .and_then(|s| item.select(&s).next())
-                    .unwrap_or(item);
-
-                let pub_date_text = pub_date_node.text().collect::<String>().trim().to_string();
-                let pub_date = chrono_english::parse_date_string(&pub_date_text, Local::now(), Dialect::Uk).ok();
-
-                Some(FeedItem { title, url: absolute_url, pub_date })
-            })
-            .collect();
-
-        if request.order == FeedOrder::Reversed {
-            items.reverse();
-        }
-
-        let mut items: Vec<FeedItem> = items
-            .into_iter()
-            .take(request.max_items)
-            .collect();
-
-        // From a lot of sites we don't have a good way to get the
-        // publication date. Instead we synthesise a date to keep
-        // the feed order consistent.
-        let mut item_pub_date = Local::now();
-        for item in items.iter_mut() {
-            item.pub_date = Some(item.pub_date.unwrap_or(item_pub_date));
-            item_pub_date = item_pub_date - Duration::hours(1);
-        }
+    pub fn from_website(website: Website, now: DateTime<Local>) -> Feed {
+        let items = Feed::infer_feed_items(website.elements, now);
+        let items = Feed::match_pub_dates_to_order(items);
 
         Feed {
-            name: request.name.clone(),
-            url: request.url.clone(),
+            name: website.name,
+            url: website.url,
             items
         }
     }
@@ -107,29 +57,72 @@ impl Feed {
             items_xml
         }
     }
+
+    fn infer_feed_items(elements: Vec<WebsiteElement>, now: DateTime<Local>) -> Vec<FeedItem> {
+        let mut previous_pub_date = elements
+            .get(0)
+            .and_then(|element| element.pub_date)
+            .unwrap_or(now);
+
+        elements
+            .into_iter()
+            .map(|element| {
+                let pub_date = element.pub_date.unwrap_or(previous_pub_date);
+                previous_pub_date = pub_date;
+
+                FeedItem {
+                    title: element.title,
+                    url: element.url,
+                    pub_date
+                }
+            })
+            .collect()
+    }
+
+    /// We want the `pub_date`'s of `items` to match the order of `items` since
+    /// most feeds use `pub_date` to decide what order to show a feed in.
+    ///
+    /// We also don't want any `pub_date` to be duplicated since the order becomes
+    /// undefined. To solve this we jitter the `pub_date` slightly to make the order
+    /// match.
+    fn match_pub_dates_to_order(items: Vec<FeedItem>) -> Vec<FeedItem> {
+        let mut previous_item_pub_date = match items.get(0) {
+            Some(first_item) => first_item.pub_date,
+            None => return vec![]
+        };
+
+        let mut items = items;
+
+        items
+            .iter_mut()
+            .skip(1)
+            .for_each(|item| {
+                if item.pub_date >= previous_item_pub_date {
+                    item.pub_date = previous_item_pub_date - Duration::seconds(1);
+                }
+
+                previous_item_pub_date = item.pub_date;
+            });
+
+        items
+    }
 }
 
 impl FeedItem {
     pub fn to_rss_xml(&self) -> String {
-        let pub_date_string = self.pub_date
-            .map(|d| {
-                format!("<pubDate>{}</pubDate>", d.to_rfc2822())
-            })
-            .unwrap_or_else(|| String::new());
-
         formatdoc! {"
             <item>
                 <title>{}</title>
                 <link>{}</link>
                 <guid>{}</guid>
-                {}
+                <pubDate>{}</pubDate>
                 <description/>
             </item>
             ",
             self.title,
             self.url,
             self.url,
-            pub_date_string
+            self.pub_date.to_rfc2822()
         }
     }
 }
@@ -137,73 +130,78 @@ impl FeedItem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scraper::Selector;
-    use indoc::indoc;
-    use chrono::{TimeZone, NaiveDate};
+    use chrono::prelude::*;
 
-    /// When parsing items from HTML we need to deal with two types of links:
-    ///
-    /// - Relative: `<a href="/a/sub/page.html" />`
-    /// - Absolute: `<a href="www.example.com/a/sub/page.html />`
-    ///
-    /// Our RSS output needs all links to be absolute, so we want to test that the rss scraping
-    /// correctly transforms relative links into absolute links.
-    #[test]
-    pub fn parse_relative_links() {
-        let request = FeedRequest {
-            name: "Parse Relative RSS Links Test".into(),
-            url: Url::parse("https://example.com/feed/").unwrap(),
-            item_selector: Selector::parse(".item").unwrap(),
-            title_selector: None,
-            link_selector: None,
-            pub_date_selector: None,
-            order: FeedOrder::Normal,
-            max_items: 30,
-        };
-
-        let html_body = indoc! {r#"
-            <!DOCTYPE html>
-            <html lang="en-US">
-            <body>
-                <a class="item" href="item-1">Item 1</a>
-                <a class="item" href="item-2">Item 2</a>
-            </body>
-        "#};
-
-        let feed = Feed::scrape(&request, html_body);
-
-        assert_eq!(feed.items.get(0).map(|i| i.url.to_string()), Some("https://example.com/feed/item-1".to_string()))
+    fn element_url() -> Url {
+        Url::parse("https://example.com/feed/").unwrap()
     }
 
     #[test]
-    pub fn parse_human_dates() {
-        let request = FeedRequest {
-            name: "Parse Human Dates Test".into(),
+    pub fn from_website_should_infer_missing_dates_from_previous_date() {
+        let website = Website {
+            name: "Test Website".into(),
             url: Url::parse("https://example.com/feed/").unwrap(),
-            item_selector: Selector::parse(".item").unwrap(),
-            title_selector: Selector::parse(".link").ok(),
-            link_selector: Selector::parse(".link").ok(),
-            pub_date_selector: Selector::parse(".published").ok(),
-            order: FeedOrder::Normal,
-            max_items: 30,
+            elements: vec![
+                website_element("The Story A", None),
+                website_element("The Story B", None),
+                website_element("The Story C", Some(Local.ymd(2020, 02, 01).and_hms(13, 0, 0))),
+                website_element("The Story D", Some(Local.ymd(2020, 02, 01).and_hms(13, 0, 0))),
+                website_element("The Story E", Some(Local.ymd(2020, 03, 01).and_hms(13, 0, 0))),
+                website_element("The Story F", Some(Local.ymd(2020, 03, 01).and_hms(13, 0, 0))),
+            ],
         };
 
-        let html_body = indoc! {r#"
-            <!DOCTYPE html>
-            <html lang="en-US">
-            <body>
-              <div class="item">
-                <a class="link" href="item-1">The Story</a>
-                <p class="published">Jan 10, 2021</p>
-              </div>
-            </body>
-        "#};
+        let now = Local.ymd(2021, 02, 01).and_hms(13, 0, 0);
+        let feed = Feed::from_website(website, now);
 
-        let feed = Feed::scrape(&request, html_body);
+        for window in feed.items.windows(2) {
+            let earlier_item = window.get(0).expect("earlier_item should exist");
+            let later_item = window.get(1).expect("later_item should exist");
+            assert!(
+                earlier_item.pub_date > later_item.pub_date,
+                "{} should be published after {}. earlier_pub_date = {}, later_pub_date = {}",
+                earlier_item.title,
+                later_item.title,
+                earlier_item.pub_date,
+                later_item.pub_date
+            )
+        }
+    }
 
-        assert_eq!(
-            feed.items.get(0).and_then(|i| i.pub_date),
-            Local.from_local_date(&NaiveDate::from_ymd(2021, 01, 10)).and_hms_opt(0, 0, 0).earliest()
-        );
+    #[test]
+    pub fn from_website_should_reorder_pub_date_by_input_order() {
+        let website = Website {
+            name: "Test Website".into(),
+            url: Url::parse("https://example.com/feed/").unwrap(),
+            elements: vec![
+                website_element("The Story A", Some(Local.ymd(2020, 03, 01).and_hms(13, 0, 0))),
+                website_element("The Story B", Some(Local.ymd(2020, 03, 02).and_hms(13, 0, 0))),
+                website_element("The Story C", Some(Local.ymd(2020, 02, 01).and_hms(13, 0, 0))),
+            ],
+        };
+
+        let now = Local.ymd(2021, 02, 01).and_hms(13, 0, 0);
+        let feed = Feed::from_website(website, now);
+
+        for window in feed.items.windows(2) {
+            let earlier_item = window.get(0).expect("earlier_item should exist");
+            let later_item = window.get(1).expect("later_item should exist");
+            assert!(
+                earlier_item.pub_date > later_item.pub_date,
+                "{} should be published after {}. earlier_pub_date = {}, later_pub_date = {}",
+                earlier_item.title,
+                later_item.title,
+                earlier_item.pub_date,
+                later_item.pub_date
+            )
+        }
+    }
+
+    fn website_element(title: &str, pub_date: Option<DateTime<Local>>) -> WebsiteElement {
+        WebsiteElement {
+            title: title.into(),
+            url: element_url(),
+            pub_date
+        }
     }
 }

@@ -38,8 +38,8 @@ fn fetch_from_cache(
         let mut buf_reader = BufReader::new(cache_file);
         let mut cache = String::new();
         buf_reader.read_to_string(&mut cache)?;
-        Ok(Some(cache))
 
+        Ok(Some(cache))
     } else {
         Ok(None)
     }
